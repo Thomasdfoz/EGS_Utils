@@ -1,6 +1,6 @@
 {
     "name": "com.vrglass.utils",
-    "version": "0.0.2",
+    "version": "1.0.0",
     "displayName": "Utils",
     "description": "...",
     "unity": "2020.3",
@@ -11,6 +11,5 @@
     },
     "type": "tools",
     "dependencies": {
-        "com.unity.addressables": "2.2.x"
     }
 }
