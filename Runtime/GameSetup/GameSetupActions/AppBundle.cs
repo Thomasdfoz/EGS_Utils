@@ -1,5 +1,6 @@
 #if UNITY_EDITOR 
 using UnityEditor;
+using UnityEditor.Build;
 #endif
 
 
@@ -10,13 +11,13 @@ namespace EGS.Utils
         public override void ExecuteAction(object value)
         {
 #if UNITY_EDITOR
-            BuildTargetGroup buildTargetGroup = BuildTargetGroup.Standalone;
+            NamedBuildTarget buildTargetGroup = NamedBuildTarget.Standalone;
 #if !UNITY_EDITOR && UNITY_WEBGL
-             buildTargetGroup = BuildTargetGroup.WebGL;
+             buildTargetGroup = NamedBuildTarget.WebGL;
 #elif UNITY_ANDROID
-            buildTargetGroup = BuildTargetGroup.Android;
+            buildTargetGroup = NamedBuildTarget.Android;
 #elif UNITY_IOS
-            buildTargetGroup = BuildTargetGroup.iOS;
+            buildTargetGroup = NamedBuildTarget.iOS;
 #endif
             PlayerSettings.SetApplicationIdentifier(buildTargetGroup, value.ToString());
 #endif

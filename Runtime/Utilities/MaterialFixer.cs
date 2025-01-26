@@ -7,8 +7,8 @@ namespace EGS.Utils
     {
         public static void FixMaterials()
         {
-            MeshRenderer[] meshRenderers = GameObject.FindObjectsOfType<MeshRenderer>();
-            SkinnedMeshRenderer[] skinnedMeshRenderers = GameObject.FindObjectsOfType<SkinnedMeshRenderer>();
+            MeshRenderer[] meshRenderers = GameObject.FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None);
+            SkinnedMeshRenderer[] skinnedMeshRenderers = GameObject.FindObjectsByType<SkinnedMeshRenderer>(FindObjectsSortMode.None);
             for (int i = 0; i < meshRenderers.Length; i++)
             {
                 for (int j = 0; j < meshRenderers[i].materials.Length; j++)
