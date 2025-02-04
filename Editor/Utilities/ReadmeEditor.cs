@@ -47,7 +47,7 @@ namespace EGS.Utils.Editor
             catch (FileNotFoundException ex)
             {
 
-                Debugger.LogWarning($"Arquivo Readme n�o existe, Crie um arquivo README.md na raiz do repositorio! " + ex.Message);
+                Debug.LogWarning($"Arquivo Readme n�o existe, Crie um arquivo README.md na raiz do repositorio! " + ex.Message);
 
             }
 

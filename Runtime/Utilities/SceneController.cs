@@ -1,4 +1,3 @@
-using EGS.Utils;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -6,7 +5,7 @@ using UnityEngine.SceneManagement;
 
 namespace EGS.Utils 
 {
-    public class SceneController : SingletonBehaviour<SceneController>
+    public class SceneController : MonoBehaviour
     {
         public IEnumerator LoadSceneAsync(string sceneName)
         {
@@ -15,7 +14,7 @@ namespace EGS.Utils
             while (!lOperation.isDone)
                 yield return null;
 
-            Debugger.Log($"Loading scene {sceneName}...");
+            Debug.Log($"Loading scene {sceneName}...");
         }
     }
 }
