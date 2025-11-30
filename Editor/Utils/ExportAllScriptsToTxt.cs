@@ -11,21 +11,30 @@ using UnityEngine;
 
 public class ExportAllScriptsToTxt : EditorWindow
 {
-    // Caminho de saída do arquivo final
     private string outputFilePath = "Assets/AllScriptsCombined.txt";
 
-    // Pasta raiz onde o script vai começar a procurar (Default: Assets)
+    // Pasta raiz onde o script vai começar a procurar
     private string searchPath = "Assets";
 
     private bool includeComments = true;
     private bool skipGenerated = true;
     private Vector2 scroll;
 
+    // Chave única para salvar a preferência no registro do Editor
+    private const string PREF_KEY_SEARCH_PATH = "ExportScripts_SearchPath";
+
     [MenuItem("Tools/Export All Scripts To Single TXT")]
     public static void ShowWindow()
     {
         var wnd = GetWindow<ExportAllScriptsToTxt>("Export Scripts");
-        wnd.minSize = new Vector2(520, 250); // Aumentei um pouco a altura mínima
+        wnd.minSize = new Vector2(520, 250);
+    }
+
+    // --- NOVO: Carrega o valor salvo quando a janela abre ---
+    private void OnEnable()
+    {
+        // Tenta pegar o valor salvo. Se não existir, usa "Assets" como padrão.
+        searchPath = EditorPrefs.GetString(PREF_KEY_SEARCH_PATH, "Assets");
     }
 
     private void OnGUI()
@@ -35,8 +44,16 @@ public class ExportAllScriptsToTxt : EditorWindow
 
         EditorGUILayout.BeginVertical("box");
 
-        // --- NOVO: Campo para definir a pasta de busca ---
+        // --- ALTERADO: Detecta mudanças para salvar automaticamente ---
+        EditorGUI.BeginChangeCheck(); // Começa a vigiar mudanças
+
         searchPath = EditorGUILayout.TextField(new GUIContent("Search Folder", "A pasta raiz onde os scripts serão buscados (ex: Assets/_Game)"), searchPath);
+
+        if (EditorGUI.EndChangeCheck()) // Se mudou algo no campo acima...
+        {
+            // ...salva imediatamente nas preferências do Editor
+            EditorPrefs.SetString(PREF_KEY_SEARCH_PATH, searchPath);
+        }
 
         outputFilePath = EditorGUILayout.TextField("Output file:", outputFilePath);
         includeComments = EditorGUILayout.Toggle("Include comments", includeComments);
@@ -45,11 +62,11 @@ public class ExportAllScriptsToTxt : EditorWindow
 
         EditorGUILayout.Space();
 
-        // Validação visual simples
+        // Validação visual
         if (!Directory.Exists(searchPath))
         {
             EditorGUILayout.HelpBox($"A pasta '{searchPath}' não foi encontrada!", MessageType.Error);
-            GUI.enabled = false; // Desabilita o botão se a pasta não existir
+            GUI.enabled = false;
         }
 
         if (GUILayout.Button("Run Export"))
@@ -81,13 +98,9 @@ public class ExportAllScriptsToTxt : EditorWindow
     {
         var absoluteOutput = Path.GetFullPath(outputFilePath);
 
-        // Guarantee directory exists
         Directory.CreateDirectory(Path.GetDirectoryName(absoluteOutput));
 
         var sb = new StringBuilder();
-
-        // --- ALTERAÇÃO PRINCIPAL: Usa o searchPath definido pelo usuário ---
-        // Se o path estiver vazio ou nulo, forçamos "Assets" por segurança
         string targetFolder = string.IsNullOrEmpty(searchPath) ? "Assets" : searchPath;
 
         var files = Directory.GetFiles(targetFolder, "*.cs", SearchOption.AllDirectories);
@@ -112,7 +125,6 @@ public class ExportAllScriptsToTxt : EditorWindow
 
             var extracted = ExtractTopLevelUnits(text);
 
-            // Normaliza o caminho do arquivo para ficar legível no output (troca \ por /)
             string displayPath = file.Replace("\\", "/");
 
             if (extracted.Count == 0)
