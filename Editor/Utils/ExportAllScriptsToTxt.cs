@@ -11,7 +11,12 @@ using UnityEngine;
 
 public class ExportAllScriptsToTxt : EditorWindow
 {
+    // Caminho de saída do arquivo final
     private string outputFilePath = "Assets/AllScriptsCombined.txt";
+
+    // Pasta raiz onde o script vai começar a procurar (Default: Assets)
+    private string searchPath = "Assets";
+
     private bool includeComments = true;
     private bool skipGenerated = true;
     private Vector2 scroll;
@@ -20,27 +25,39 @@ public class ExportAllScriptsToTxt : EditorWindow
     public static void ShowWindow()
     {
         var wnd = GetWindow<ExportAllScriptsToTxt>("Export Scripts");
-        wnd.minSize = new Vector2(520, 220);
+        wnd.minSize = new Vector2(520, 250); // Aumentei um pouco a altura mínima
     }
 
     private void OnGUI()
     {
-        GUILayout.Label("Export all .cs files (Assets/) into a single big .txt", EditorStyles.boldLabel);
+        GUILayout.Label("Export .cs files to a single .txt", EditorStyles.boldLabel);
         EditorGUILayout.Space();
 
         EditorGUILayout.BeginVertical("box");
+
+        // --- NOVO: Campo para definir a pasta de busca ---
+        searchPath = EditorGUILayout.TextField(new GUIContent("Search Folder", "A pasta raiz onde os scripts serão buscados (ex: Assets/_Game)"), searchPath);
+
         outputFilePath = EditorGUILayout.TextField("Output file:", outputFilePath);
         includeComments = EditorGUILayout.Toggle("Include comments", includeComments);
         skipGenerated = EditorGUILayout.Toggle("Skip generated files", skipGenerated);
         EditorGUILayout.EndVertical();
 
         EditorGUILayout.Space();
+
+        // Validação visual simples
+        if (!Directory.Exists(searchPath))
+        {
+            EditorGUILayout.HelpBox($"A pasta '{searchPath}' não foi encontrada!", MessageType.Error);
+            GUI.enabled = false; // Desabilita o botão se a pasta não existir
+        }
+
         if (GUILayout.Button("Run Export"))
         {
             try
             {
                 RunExport();
-                EditorUtility.DisplayDialog("Export Complete", $"Generated at:\n{outputFilePath}", "OK");
+                EditorUtility.DisplayDialog("Export Complete", $"Generated at:\n{outputFilePath}\n\nScanned folder:\n{searchPath}", "OK");
             }
             catch (Exception ex)
             {
@@ -48,11 +65,12 @@ public class ExportAllScriptsToTxt : EditorWindow
                 EditorUtility.DisplayDialog("Export Failed", ex.Message, "OK");
             }
         }
+        GUI.enabled = true;
 
         EditorGUILayout.Space();
         scroll = EditorGUILayout.BeginScrollView(scroll, GUILayout.Height(80));
         EditorGUILayout.HelpBox(
-            "This tool exports ALL .cs files under Assets/, including Editor scripts.\n" +
+            $"This tool exports .cs files starting from '{searchPath}'.\n" +
             "The output file will always be created inside Assets/.\n" +
             "Each class/namespace block is separated by a blank line.",
             MessageType.Info);
@@ -67,7 +85,12 @@ public class ExportAllScriptsToTxt : EditorWindow
         Directory.CreateDirectory(Path.GetDirectoryName(absoluteOutput));
 
         var sb = new StringBuilder();
-        var files = Directory.GetFiles("Assets", "*.cs", SearchOption.AllDirectories);
+
+        // --- ALTERAÇÃO PRINCIPAL: Usa o searchPath definido pelo usuário ---
+        // Se o path estiver vazio ou nulo, forçamos "Assets" por segurança
+        string targetFolder = string.IsNullOrEmpty(searchPath) ? "Assets" : searchPath;
+
+        var files = Directory.GetFiles(targetFolder, "*.cs", SearchOption.AllDirectories);
 
         var units = new List<string>();
 
@@ -88,14 +111,18 @@ public class ExportAllScriptsToTxt : EditorWindow
                 text = StripCommentsSimple(text);
 
             var extracted = ExtractTopLevelUnits(text);
+
+            // Normaliza o caminho do arquivo para ficar legível no output (troca \ por /)
+            string displayPath = file.Replace("\\", "/");
+
             if (extracted.Count == 0)
             {
-                extracted.Add($"// --- FILE: {file} ---\n" + text.Trim());
+                extracted.Add($"// --- FILE: {displayPath} ---\n" + text.Trim());
             }
             else
             {
                 for (int i = 0; i < extracted.Count; i++)
-                    extracted[i] = $"// --- FROM: {file} ---\n" + extracted[i].Trim();
+                    extracted[i] = $"// --- FROM: {displayPath} ---\n" + extracted[i].Trim();
             }
 
             units.AddRange(extracted);
