@@ -1,154 +1,195 @@
-// Place this file under Assets/Editor/ExportAllScriptsToTxt.cs
-// Usage: Unity menu -> Tools -> Export All Scripts To Single TXT
 #if UNITY_EDITOR
 using System;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Networking;
 
 public class ExportAllScriptsToTxt : EditorWindow
 {
     private string outputFilePath = "Assets/AllScriptsCombined.txt";
-
-    // Pasta raiz onde o script vai começar a procurar
+    private string readmeOutputPath = "Assets/README_AI.md";
     private string searchPath = "Assets";
+    private string apiKey = ""; // Insira sua chave aqui ou no campo da janela
 
     private bool includeComments = true;
     private bool skipGenerated = true;
+    private bool isProcessing = false;
     private Vector2 scroll;
 
-    // Chave única para salvar a preferência no registro do Editor
     private const string PREF_KEY_SEARCH_PATH = "ExportScripts_SearchPath";
+    private const string PREF_KEY_API_KEY = "ExportScripts_GeminiKey";
 
-    [MenuItem("Tools/Export All Scripts To Single TXT")]
-    public static void ShowWindow()
-    {
-        var wnd = GetWindow<ExportAllScriptsToTxt>("Export Scripts");
-        wnd.minSize = new Vector2(520, 250);
-    }
+    [MenuItem("Tools/Export All Scripts & Generate README")]
+    public static void ShowWindow() => GetWindow<ExportAllScriptsToTxt>("AI Script Exporter").minSize = new Vector2(550, 400);
 
-    // --- NOVO: Carrega o valor salvo quando a janela abre ---
     private void OnEnable()
     {
-        // Tenta pegar o valor salvo. Se não existir, usa "Assets" como padrão.
         searchPath = EditorPrefs.GetString(PREF_KEY_SEARCH_PATH, "Assets");
+        apiKey = EditorPrefs.GetString(PREF_KEY_API_KEY, "");
     }
 
     private void OnGUI()
     {
-        GUILayout.Label("Export .cs files to a single .txt", EditorStyles.boldLabel);
-        EditorGUILayout.Space();
+        GUILayout.Label("Export & AI Documentation", EditorStyles.boldLabel);
 
+        scroll = EditorGUILayout.BeginScrollView(scroll);
+
+        // --- Configurações de Exportação ---
         EditorGUILayout.BeginVertical("box");
+        EditorGUI.BeginChangeCheck();
+        searchPath = EditorGUILayout.TextField("Search Folder", searchPath);
+        if (EditorGUI.EndChangeCheck()) EditorPrefs.SetString(PREF_KEY_SEARCH_PATH, searchPath);
 
-        // --- ALTERADO: Detecta mudanças para salvar automaticamente ---
-        EditorGUI.BeginChangeCheck(); // Começa a vigiar mudanças
-
-        searchPath = EditorGUILayout.TextField(new GUIContent("Search Folder", "A pasta raiz onde os scripts serão buscados (ex: Assets/_Game)"), searchPath);
-
-        if (EditorGUI.EndChangeCheck()) // Se mudou algo no campo acima...
-        {
-            // ...salva imediatamente nas preferências do Editor
-            EditorPrefs.SetString(PREF_KEY_SEARCH_PATH, searchPath);
-        }
-
-        outputFilePath = EditorGUILayout.TextField("Output file:", outputFilePath);
-        includeComments = EditorGUILayout.Toggle("Include comments", includeComments);
-        skipGenerated = EditorGUILayout.Toggle("Skip generated files", skipGenerated);
+        outputFilePath = EditorGUILayout.TextField("Output TXT:", outputFilePath);
+        readmeOutputPath = EditorGUILayout.TextField("Output README (MD):", readmeOutputPath);
+        includeComments = EditorGUILayout.Toggle("Include Comments", includeComments);
+        skipGenerated = EditorGUILayout.Toggle("Skip Generated", skipGenerated);
         EditorGUILayout.EndVertical();
 
         EditorGUILayout.Space();
 
-        // Validação visual
-        if (!Directory.Exists(searchPath))
-        {
-            EditorGUILayout.HelpBox($"A pasta '{searchPath}' não foi encontrada!", MessageType.Error);
-            GUI.enabled = false;
-        }
-
-        if (GUILayout.Button("Run Export"))
-        {
-            try
-            {
-                RunExport();
-                EditorUtility.DisplayDialog("Export Complete", $"Generated at:\n{outputFilePath}\n\nScanned folder:\n{searchPath}", "OK");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError("Export failed: " + ex);
-                EditorUtility.DisplayDialog("Export Failed", ex.Message, "OK");
-            }
-        }
-        GUI.enabled = true;
+        // --- Configurações da IA ---
+        EditorGUILayout.LabelField("AI Settings", EditorStyles.miniBoldLabel);
+        EditorGUILayout.BeginVertical("box");
+        EditorGUI.BeginChangeCheck();
+        apiKey = EditorGUILayout.PasswordField("Gemini API Key:", apiKey);
+        if (EditorGUI.EndChangeCheck()) EditorPrefs.SetString(PREF_KEY_API_KEY, apiKey);
+        EditorGUILayout.EndVertical();
 
         EditorGUILayout.Space();
-        scroll = EditorGUILayout.BeginScrollView(scroll, GUILayout.Height(80));
-        EditorGUILayout.HelpBox(
-            $"This tool exports .cs files starting from '{searchPath}'.\n" +
-            "The output file will always be created inside Assets/.\n" +
-            "Each class/namespace block is separated by a blank line.",
-            MessageType.Info);
+
+        // --- Botões de Ação ---
+        if (isProcessing)
+        {
+            GUI.enabled = false;
+            GUILayout.Button("Processing with AI... Please wait.");
+            GUI.enabled = true;
+        }
+        else
+        {
+            if (GUILayout.Button("Step 1: Export Scripts to TXT", GUILayout.Height(30)))
+            {
+                RunExport();
+                EditorUtility.DisplayDialog("Success", "Scripts exported to " + outputFilePath, "OK");
+            }
+
+            if (GUILayout.Button("Step 2: Generate AI README from TXT", GUILayout.Height(30)))
+            {
+                _ = RequestAIRecap(); // Chama o método async
+            }
+        }
+
         EditorGUILayout.EndScrollView();
     }
 
     private void RunExport()
     {
-        var absoluteOutput = Path.GetFullPath(outputFilePath);
-
+        string absoluteOutput = Path.GetFullPath(outputFilePath);
         Directory.CreateDirectory(Path.GetDirectoryName(absoluteOutput));
 
-        var sb = new StringBuilder();
-        string targetFolder = string.IsNullOrEmpty(searchPath) ? "Assets" : searchPath;
-
-        var files = Directory.GetFiles(targetFolder, "*.cs", SearchOption.AllDirectories);
-
-        var units = new List<string>();
+        StringBuilder sb = new StringBuilder();
+        string[] files = Directory.GetFiles(searchPath, "*.cs", SearchOption.AllDirectories);
 
         foreach (var file in files)
         {
-            string fileName = Path.GetFileName(file);
+            if (skipGenerated && IsGenerated(file)) continue;
 
-            if (skipGenerated)
-            {
-                if (fileName.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
-                    fileName.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase) ||
-                    fileName.IndexOf("generated", StringComparison.OrdinalIgnoreCase) >= 0)
-                    continue;
-            }
+            string text = File.ReadAllText(file);
+            if (!includeComments) text = StripCommentsSimple(text);
 
-            string text = File.ReadAllText(file, Encoding.UTF8);
-            if (!includeComments)
-                text = StripCommentsSimple(text);
-
-            var extracted = ExtractTopLevelUnits(text);
-
-            string displayPath = file.Replace("\\", "/");
-
-            if (extracted.Count == 0)
-            {
-                extracted.Add($"// --- FILE: {displayPath} ---\n" + text.Trim());
-            }
-            else
-            {
-                for (int i = 0; i < extracted.Count; i++)
-                    extracted[i] = $"// --- FROM: {displayPath} ---\n" + extracted[i].Trim();
-            }
-
-            units.AddRange(extracted);
-        }
-
-        for (int i = 0; i < units.Count; i++)
-        {
-            sb.AppendLine(units[i]);
-            if (i < units.Count - 1)
-                sb.AppendLine();
+            sb.AppendLine($"// --- FILE: {file.Replace("\\", "/")} ---");
+            sb.AppendLine(text.Trim());
+            sb.AppendLine();
         }
 
         File.WriteAllText(absoluteOutput, sb.ToString(), new UTF8Encoding(false));
         AssetDatabase.Refresh();
+    }
+
+    private bool IsGenerated(string path) => path.Contains(".g.") || path.Contains(".Designer.") || path.ToLower().Contains("generated");
+
+    private async Task RequestAIRecap()
+    {
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            EditorUtility.DisplayDialog("Error", "Please provide a Gemini API Key.", "OK");
+            return;
+        }
+
+        if (!File.Exists(outputFilePath))
+        {
+            RunExport();
+        }
+
+        isProcessing = true;
+        string codeContent = File.ReadAllText(outputFilePath);
+
+        // Prompt agressivo para garantir que a IA não mande conversa furada, apenas o MD
+        string prompt = $"Analise os scripts C# abaixo de um projeto Unity e crie um arquivo README.md profissional. " +
+                        $"Inclua: Nome do projeto (baseado na pasta), visão geral, principais classes/sistemas e instruções de uso. " +
+                        $"Responda APENAS com o código Markdown, sem textos explicativos antes ou depois.\n\nCÓDIGO:\n{codeContent}";
+
+        try
+        {
+            string response = await SendToGemini(prompt);
+            // Limpa possíveis marcações de markdown da resposta da IA
+            response = response.Replace("```markdown", "").Replace("```", "").Trim();
+
+            File.WriteAllText(readmeOutputPath, response, Encoding.UTF8);
+            AssetDatabase.Refresh();
+            EditorUtility.DisplayDialog("AI Success", "README.md generated successfully!", "OK");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("Gemini Error: " + e.Message);
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+    private async Task<string> SendToGemini(string prompt)
+    {
+        // Em 2026, usamos a v1beta para acessar os modelos 2.0 Flash mais recentes
+        // O nome do modelo oficial agora é gemini-2.0-flash
+        string modelName = "gemini-2.0-flash";
+        string url = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={apiKey}";
+
+        // Estrutura de JSON para o Gemini 2.0
+        string manualJson = "{\"contents\":[{\"parts\":[{\"text\":\"" + JsonHelper.Escape(prompt) + "\"}]}]}";
+
+        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(manualJson);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            var operation = request.SendWebRequest();
+
+            while (!operation.isDone) await Task.Yield();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                // Se o 404 persistir, o Google pode ter mudado o alias para 'gemini-2.0-flash-exp' ou similar
+                string errorDetail = request.downloadHandler.text;
+                throw new Exception($"Erro na API Gemini ({request.responseCode}): {errorDetail}");
+            }
+
+            var responseData = JsonUtility.FromJson<GeminiResponse>(request.downloadHandler.text);
+
+            if (responseData?.candidates != null && responseData.candidates.Length > 0)
+            {
+                return responseData.candidates[0].content.parts[0].text;
+            }
+
+            throw new Exception("A IA não retornou conteúdo válido.");
+        }
     }
 
     private static string StripCommentsSimple(string input)
@@ -158,63 +199,15 @@ public class ExportAllScriptsToTxt : EditorWindow
         return input;
     }
 
-    private static List<string> ExtractTopLevelUnits(string text)
+    // Classes auxiliares para o JSON
+    [Serializable] private class GeminiResponse { public Candidate[] candidates; }
+    [Serializable] private class Candidate { public Content content; }
+    [Serializable] private class Content { public Part[] parts; }
+    [Serializable] private class Part { public string text; }
+
+    private static class JsonHelper
     {
-        var units = new List<string>();
-        int idx = 0;
-        var work = text;
-
-        var nsPattern = new Regex(@"\bnamespace\s+[A-Za-z0-9_\.]+\s*{", RegexOptions.Compiled);
-        var nsMatches = nsPattern.Matches(work);
-        var consumed = new bool[work.Length];
-
-        foreach (Match m in nsMatches)
-        {
-            int start = m.Index;
-            int braceStart = work.IndexOf('{', m.Index + m.Length - 1);
-            if (braceStart < 0) continue;
-            int end = FindMatchingBrace(work, braceStart);
-            if (end < 0) continue;
-
-            string block = work.Substring(start, end - start + 1);
-            units.Add(block.Trim());
-            for (int k = start; k <= end && k < consumed.Length; k++) consumed[k] = true;
-        }
-
-        var typePattern = new Regex(@"\b(class|struct|interface|enum)\s+[A-Za-z0-9_\<\>]+", RegexOptions.Compiled);
-        var typeMatches = typePattern.Matches(work);
-
-        foreach (Match m in typeMatches)
-        {
-            int start = m.Index;
-            if (start < consumed.Length && consumed[start]) continue;
-
-            int braceStart = work.IndexOf('{', m.Index + m.Length);
-            if (braceStart < 0) continue;
-            int end = FindMatchingBrace(work, braceStart);
-            if (end < 0) continue;
-
-            string block = work.Substring(start, end - start + 1);
-            units.Add(block.Trim());
-            for (int k = start; k <= end && k < consumed.Length; k++) consumed[k] = true;
-        }
-
-        return units;
-    }
-
-    private static int FindMatchingBrace(string text, int openPos)
-    {
-        int depth = 0;
-        for (int i = openPos; i < text.Length; i++)
-        {
-            if (text[i] == '{') depth++;
-            else if (text[i] == '}')
-            {
-                depth--;
-                if (depth == 0) return i;
-            }
-        }
-        return -1;
+        public static string Escape(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     }
 }
 #endif
