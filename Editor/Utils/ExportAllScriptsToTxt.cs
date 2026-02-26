@@ -11,13 +11,22 @@ using UnityEngine.Networking;
 
 public class ExportAllScriptsToTxt : EditorWindow
 {
+    // Export
     private string outputFilePath = "Assets/AllScriptsCombined.txt";
-    private string readmeOutputPath = "Assets/README_AI.md";
     private string searchPath = "Assets";
+
+    // Import (NEW)
+    private TextAsset inputCombinedTxt;
+    private bool importOverwriteExisting = true;
+    private bool importOnlyCs = true;
+    private bool importSkipGenerated = true;
+
+    // README / AI
+    private string readmeOutputPath = "Assets/README_AI.md";
     private string apiKey = ""; // Insira sua chave aqui ou no campo da janela
 
     private bool includeComments = true;
-    private bool skipGenerated = true;
+    private bool skipGenerated = true;     // (export)
     private bool isProcessing = false;
     private Vector2 scroll;
 
@@ -25,7 +34,7 @@ public class ExportAllScriptsToTxt : EditorWindow
     private const string PREF_KEY_API_KEY = "ExportScripts_GeminiKey";
 
     [MenuItem("Tools/Export All Scripts & Generate README")]
-    public static void ShowWindow() => GetWindow<ExportAllScriptsToTxt>("AI Script Exporter").minSize = new Vector2(550, 400);
+    public static void ShowWindow() => GetWindow<ExportAllScriptsToTxt>("AI Script Exporter").minSize = new Vector2(600, 520);
 
     private void OnEnable()
     {
@@ -35,56 +44,117 @@ public class ExportAllScriptsToTxt : EditorWindow
 
     private void OnGUI()
     {
-        GUILayout.Label("Export & AI Documentation", EditorStyles.boldLabel);
-
+        GUILayout.Label("Export / Import Scripts (TXT <-> Files)", EditorStyles.boldLabel);
         scroll = EditorGUILayout.BeginScrollView(scroll);
 
-        // --- Configurações de Exportação ---
+        DrawImportSection();
+
+        EditorGUILayout.Space(10);
+        DrawExportSection();
+
+        EditorGUILayout.Space(10);
+        DrawAISection();
+
+        EditorGUILayout.Space(10);
+        DrawButtons();
+
+        EditorGUILayout.EndScrollView();
+    }
+
+    private void DrawImportSection()
+    {
         EditorGUILayout.BeginVertical("box");
+        EditorGUILayout.LabelField("Step 0: Import (TXT -> Files)", EditorStyles.miniBoldLabel);
+
+        inputCombinedTxt = (TextAsset)EditorGUILayout.ObjectField("Input Combined TXT", inputCombinedTxt, typeof(TextAsset), false);
+
+        importOverwriteExisting = EditorGUILayout.ToggleLeft("Overwrite existing files", importOverwriteExisting);
+        importOnlyCs = EditorGUILayout.ToggleLeft("Only create .cs files", importOnlyCs);
+        importSkipGenerated = EditorGUILayout.ToggleLeft("Skip Generated (paths containing .g., .Designer., generated)", importSkipGenerated);
+
+        EditorGUILayout.HelpBox(
+            "The TXT must contain headers like:\n" +
+            "// --- FILE: Assets/.../Something.cs ---\n" +
+            "followed by file contents until the next header.\n" +
+            "For safety, only paths starting with 'Assets/' are written.",
+            MessageType.Info);
+
+        if (GUILayout.Button("Step 0: Import TXT -> Create Files", GUILayout.Height(30)))
+        {
+            try
+            {
+                int created, updated, skipped, errors;
+                ImportFromCombinedTxt(inputCombinedTxt, importOverwriteExisting, importOnlyCs, importSkipGenerated,
+                    out created, out updated, out skipped, out errors);
+
+                AssetDatabase.Refresh();
+
+                EditorUtility.DisplayDialog(
+                    "Import Done",
+                    $"Created: {created}\nUpdated: {updated}\nSkipped: {skipped}\nErrors: {errors}",
+                    "OK");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(e);
+                EditorUtility.DisplayDialog("Import Error", e.Message, "OK");
+            }
+        }
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawExportSection()
+    {
+        EditorGUILayout.BeginVertical("box");
+        EditorGUILayout.LabelField("Export (Files -> TXT)", EditorStyles.miniBoldLabel);
+
         EditorGUI.BeginChangeCheck();
         searchPath = EditorGUILayout.TextField("Search Folder", searchPath);
         if (EditorGUI.EndChangeCheck()) EditorPrefs.SetString(PREF_KEY_SEARCH_PATH, searchPath);
 
         outputFilePath = EditorGUILayout.TextField("Output TXT:", outputFilePath);
-        readmeOutputPath = EditorGUILayout.TextField("Output README (MD):", readmeOutputPath);
+
         includeComments = EditorGUILayout.Toggle("Include Comments", includeComments);
         skipGenerated = EditorGUILayout.Toggle("Skip Generated", skipGenerated);
+
+        if (GUILayout.Button("Step 1: Export Scripts to TXT", GUILayout.Height(30)))
+        {
+            RunExport();
+            EditorUtility.DisplayDialog("Success", "Scripts exported to " + outputFilePath, "OK");
+        }
+
         EditorGUILayout.EndVertical();
+    }
 
-        EditorGUILayout.Space();
-
-        // --- Configurações da IA ---
-        EditorGUILayout.LabelField("AI Settings", EditorStyles.miniBoldLabel);
+    private void DrawAISection()
+    {
         EditorGUILayout.BeginVertical("box");
+        EditorGUILayout.LabelField("AI README (optional)", EditorStyles.miniBoldLabel);
+
+        readmeOutputPath = EditorGUILayout.TextField("Output README (MD):", readmeOutputPath);
+
         EditorGUI.BeginChangeCheck();
         apiKey = EditorGUILayout.PasswordField("Gemini API Key:", apiKey);
         if (EditorGUI.EndChangeCheck()) EditorPrefs.SetString(PREF_KEY_API_KEY, apiKey);
+
         EditorGUILayout.EndVertical();
+    }
 
-        EditorGUILayout.Space();
-
-        // --- Botões de Ação ---
+    private void DrawButtons()
+    {
         if (isProcessing)
         {
             GUI.enabled = false;
-            GUILayout.Button("Processing with AI... Please wait.");
+            GUILayout.Button("Processing with AI... Please wait.", GUILayout.Height(30));
             GUI.enabled = true;
+            return;
         }
-        else
+
+        if (GUILayout.Button("Step 2: Generate AI README from TXT", GUILayout.Height(30)))
         {
-            if (GUILayout.Button("Step 1: Export Scripts to TXT", GUILayout.Height(30)))
-            {
-                RunExport();
-                EditorUtility.DisplayDialog("Success", "Scripts exported to " + outputFilePath, "OK");
-            }
-
-            if (GUILayout.Button("Step 2: Generate AI README from TXT", GUILayout.Height(30)))
-            {
-                _ = RequestAIRecap(); // Chama o método async
-            }
+            _ = RequestAIRecap(); // async
         }
-
-        EditorGUILayout.EndScrollView();
     }
 
     private void RunExport()
@@ -103,7 +173,7 @@ public class ExportAllScriptsToTxt : EditorWindow
             if (!includeComments) text = StripCommentsSimple(text);
 
             sb.AppendLine($"// --- FILE: {file.Replace("\\", "/")} ---");
-            sb.AppendLine(text.Trim());
+            sb.AppendLine(text.TrimEnd());
             sb.AppendLine();
         }
 
@@ -111,7 +181,127 @@ public class ExportAllScriptsToTxt : EditorWindow
         AssetDatabase.Refresh();
     }
 
-    private bool IsGenerated(string path) => path.Contains(".g.") || path.Contains(".Designer.") || path.ToLower().Contains("generated");
+    // =========================
+    // IMPORT (NEW)
+    // =========================
+
+    private static readonly Regex FileHeaderRegex =
+        new Regex(@"^\s*//\s*---\s*FILE:\s*(.+?)\s*---\s*$", RegexOptions.Multiline);
+
+    private static void ImportFromCombinedTxt(
+        TextAsset combinedTxt,
+        bool overwriteExisting,
+        bool onlyCs,
+        bool skipGenerated,
+        out int created,
+        out int updated,
+        out int skipped,
+        out int errors)
+    {
+        created = updated = skipped = errors = 0;
+
+        if (combinedTxt == null)
+            throw new Exception("Select an Input Combined TXT (TextAsset) first.");
+
+        string all = combinedTxt.text ?? "";
+        if (string.IsNullOrWhiteSpace(all))
+            throw new Exception("Input TXT is empty.");
+
+        // Find all headers
+        MatchCollection matches = FileHeaderRegex.Matches(all);
+        if (matches.Count == 0)
+            throw new Exception("No file headers found. Expected lines like: // --- FILE: Assets/.../File.cs ---");
+
+        for (int i = 0; i < matches.Count; i++)
+        {
+            string rawPath = matches[i].Groups[1].Value.Trim();
+            rawPath = rawPath.Replace("\\", "/");
+
+            int contentStart = matches[i].Index + matches[i].Length;
+            int contentEnd = (i + 1 < matches.Count) ? matches[i + 1].Index : all.Length;
+
+            string content = all.Substring(contentStart, contentEnd - contentStart);
+
+            // Remove leading newlines/spaces after header
+            content = content.TrimStart('\r', '\n');
+            // Keep original file body as-is (but normalize final newline)
+            content = NormalizeLineEndings(content).TrimEnd() + "\n";
+
+            try
+            {
+                if (!rawPath.StartsWith("Assets/", StringComparison.Ordinal))
+                {
+                    skipped++;
+                    Debug.LogWarning($"[IMPORT] Skipped (outside Assets/): {rawPath}");
+                    continue;
+                }
+
+                if (skipGenerated && IsGenerated(rawPath))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (onlyCs && Path.GetExtension(rawPath).ToLowerInvariant() != ".cs")
+                {
+                    skipped++;
+                    continue;
+                }
+
+                string fullPath = Path.GetFullPath(rawPath);
+                string projectRoot = Path.GetFullPath(Application.dataPath + "/..");
+
+                // Safety: ensure the resolved path is inside the project
+                if (!fullPath.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    skipped++;
+                    Debug.LogWarning($"[IMPORT] Skipped (path escapes project): {rawPath}");
+                    continue;
+                }
+
+                string dir = Path.GetDirectoryName(fullPath);
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                bool exists = File.Exists(fullPath);
+                if (exists && !overwriteExisting)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                File.WriteAllText(fullPath, content, new UTF8Encoding(false));
+
+                if (!exists) created++;
+                else updated++;
+            }
+            catch (Exception e)
+            {
+                errors++;
+                Debug.LogError($"[IMPORT] Error writing '{rawPath}': {e.Message}");
+            }
+        }
+    }
+
+    private static string NormalizeLineEndings(string s)
+    {
+        // Convert CRLF/CR to LF for consistency.
+        s = s.Replace("\r\n", "\n");
+        s = s.Replace("\r", "\n");
+        return s;
+    }
+
+    private static bool IsGenerated(string path)
+    {
+        string p = path.Replace("\\", "/");
+        return p.Contains(".g.") ||
+               p.Contains(".Designer.") ||
+               p.ToLowerInvariant().Contains("generated");
+    }
+
+    // =========================
+    // AI README (your original)
+    // =========================
 
     private async Task RequestAIRecap()
     {
@@ -129,15 +319,14 @@ public class ExportAllScriptsToTxt : EditorWindow
         isProcessing = true;
         string codeContent = File.ReadAllText(outputFilePath);
 
-        // Prompt agressivo para garantir que a IA não mande conversa furada, apenas o MD
-        string prompt = $"Analise os scripts C# abaixo de um projeto Unity e crie um arquivo README.md profissional. " +
-                        $"Inclua: Nome do projeto (baseado na pasta), visão geral, principais classes/sistemas e instruções de uso. " +
-                        $"Responda APENAS com o código Markdown, sem textos explicativos antes ou depois.\n\nCÓDIGO:\n{codeContent}";
+        string prompt =
+            "Analise os scripts C# abaixo de um projeto Unity e crie um arquivo README.md profissional. " +
+            "Inclua: Nome do projeto (baseado na pasta), visão geral, principais classes/sistemas e instruções de uso. " +
+            "Responda APENAS com o código Markdown, sem textos explicativos antes ou depois.\n\nCÓDIGO:\n" + codeContent;
 
         try
         {
             string response = await SendToGemini(prompt);
-            // Limpa possíveis marcações de markdown da resposta da IA
             response = response.Replace("```markdown", "").Replace("```", "").Trim();
 
             File.WriteAllText(readmeOutputPath, response, Encoding.UTF8);
@@ -147,20 +336,19 @@ public class ExportAllScriptsToTxt : EditorWindow
         catch (Exception e)
         {
             Debug.LogError("Gemini Error: " + e.Message);
+            EditorUtility.DisplayDialog("AI Error", e.Message, "OK");
         }
         finally
         {
             isProcessing = false;
         }
     }
+
     private async Task<string> SendToGemini(string prompt)
     {
-        // Em 2026, usamos a v1beta para acessar os modelos 2.0 Flash mais recentes
-        // O nome do modelo oficial agora é gemini-2.0-flash
         string modelName = "gemini-2.0-flash";
         string url = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={apiKey}";
 
-        // Estrutura de JSON para o Gemini 2.0
         string manualJson = "{\"contents\":[{\"parts\":[{\"text\":\"" + JsonHelper.Escape(prompt) + "\"}]}]}";
 
         using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
@@ -171,12 +359,10 @@ public class ExportAllScriptsToTxt : EditorWindow
             request.SetRequestHeader("Content-Type", "application/json");
 
             var operation = request.SendWebRequest();
-
             while (!operation.isDone) await Task.Yield();
 
             if (request.result != UnityWebRequest.Result.Success)
             {
-                // Se o 404 persistir, o Google pode ter mudado o alias para 'gemini-2.0-flash-exp' ou similar
                 string errorDetail = request.downloadHandler.text;
                 throw new Exception($"Erro na API Gemini ({request.responseCode}): {errorDetail}");
             }
@@ -199,7 +385,6 @@ public class ExportAllScriptsToTxt : EditorWindow
         return input;
     }
 
-    // Classes auxiliares para o JSON
     [Serializable] private class GeminiResponse { public Candidate[] candidates; }
     [Serializable] private class Candidate { public Content content; }
     [Serializable] private class Content { public Part[] parts; }
@@ -207,7 +392,11 @@ public class ExportAllScriptsToTxt : EditorWindow
 
     private static class JsonHelper
     {
-        public static string Escape(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        public static string Escape(string s)
+            => s.Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r");
     }
 }
 #endif
