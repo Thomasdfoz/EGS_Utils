@@ -415,7 +415,7 @@ public class AI_ScriptExporterImporter : EditorWindow
     private async Task<string> SendToGemini(string prompt)
     {
         // Keep as you had: v1beta + gemini-2.0-flash
-        string modelName = "gemini-2.0-flash";
+        string modelName = "gemini-3-flash-preview";
         string url = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={apiKey}";
 
         string manualJson = "{\"contents\":[{\"parts\":[{\"text\":\"" + JsonHelper.Escape(prompt) + "\"}]}]}";
